@@ -238,9 +238,7 @@ public class NewsController {
             // 2.1 类别热榜 ZSet + 权重
             for (Map.Entry<String, Double> e : sorted) {
                 String cate = e.getKey();
-                double weight = e.getValue();                 // 兴趣分值直接当权重
-                // 当日该类别新闻热榜 key，需要你在写 click 数据时同步维护：
-                // 例：news_hot_rank_daily:sports:20240610
+                double weight = e.getValue();
                 keys.add("news_hot_rank_daily:" + cate + ":" + dayStr);
                 argv.add(String.valueOf(weight));
             }
@@ -290,15 +288,15 @@ public class NewsController {
         } catch (Exception ex) {
             resp.put("code", 500);
             resp.put("message", "Error: " + ex.getClass().getName() + " - " + (ex.getMessage() != null ? ex.getMessage() : "No message"));
-            // 临时: 输出异常的第一行堆栈详情（只开发用，生产要去掉）
             resp.put("stack", Arrays.stream(ex.getStackTrace()).map(StackTraceElement::toString).limit(5).collect(Collectors.toList()));
             resp.put("timestamp", timestamp);
             resp.put("elapsed", System.currentTimeMillis() - t0);
             resp.put("data", Collections.emptyList());
-            ex.printStackTrace(); // 记得开发查问题时开这个，生产注释掉
+            ex.printStackTrace();
             return resp;
         }
     }
+    @
 
     @GetMapping("/recommend/rank")
     public ResponseEntity<?> getRankedNews(
