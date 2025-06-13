@@ -2,10 +2,12 @@ package org.example.bi.Controller;
 
 
 import jakarta.annotation.Resource;
+import org.example.bi.DTO.ClickStatDto;
 import org.example.bi.DTO.PopularityResult;
 import org.example.bi.Entity.News;
 import org.example.bi.Repository.NewsRepository;
 import org.example.bi.Repository.UserClickRepository;
+import org.example.bi.Service.QueryLogService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.*;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -15,10 +17,9 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
-
+import java.time.format.DateTimeFormatter;
 @RestController
 @RequestMapping("/news")
 public class NewsController {
@@ -27,7 +28,6 @@ public class NewsController {
     private NewsRepository newsRepository;
     @Autowired
     private UserClickRepository userClickRepository;
-
 
     // 获取新闻列表
     @GetMapping
@@ -158,6 +158,54 @@ public class NewsController {
         response.put("timestamp", System.currentTimeMillis());
         response.put("elapsed", 25);
         response.put("data", data);
+
+        return ResponseEntity.ok(response);
+    }
+
+
+    @GetMapping("/statistics")
+    public ResponseEntity<?> getStatistics(
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) Integer titleLengthMin,
+            @RequestParam(required = false) Integer titleLengthMax,
+            @RequestParam(required = false) Integer contentLengthMin,
+            @RequestParam(required = false) Integer contentLengthMax,
+            @RequestParam(required = false) String userId,
+            @RequestParam(required = false) String userIds
+    ) {
+        long startTime = System.currentTimeMillis();
+
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        LocalDateTime startDateTime = null;
+        LocalDateTime endDateTime = null;
+
+        if (startDate != null && !startDate.isBlank()) {
+            startDateTime = LocalDate.parse(startDate, formatter).atStartOfDay();
+        }
+        if (endDate != null && !endDate.isBlank()) {
+            endDateTime = LocalDate.parse(endDate, formatter).plusDays(1).atStartOfDay().minusNanos(1);
+        }
+
+        // 构建动态条件
+        List<String> userIdList = new ArrayList<>();
+        if (userId != null && !userId.isBlank()) userIdList.add(userId);
+        if (userIds != null && !userIds.isBlank()) {
+            userIdList.addAll(Arrays.asList(userIds.split(",")));
+        }
+
+        List<ClickStatDto> results = userClickRepository.getStatistics(
+                startDateTime, endDateTime, category, titleLengthMin, titleLengthMax,
+                contentLengthMin, contentLengthMax, userIdList.isEmpty() ? null : userIdList
+        );
+        long elapsed = System.currentTimeMillis() - startTime;
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("message", "success");
+        response.put("timestamp", System.currentTimeMillis());
+        response.put("elapsed", elapsed);
+        response.put("data", results);
 
         return ResponseEntity.ok(response);
     }
