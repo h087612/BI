@@ -15,9 +15,10 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.stream.Collectors;
+
 @RestController
 @RequestMapping("/news")
 public class NewsController {
@@ -119,6 +120,44 @@ public class NewsController {
         response.put("timestamp", System.currentTimeMillis());
         response.put("elapsed", 20); // 可换成实际耗时
         response.put("data", result);
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/categories/popularity")
+    public ResponseEntity<?> getCategoryPopularity(
+            @RequestParam(required = false) String categories,
+            @RequestParam("startDate") @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
+            @RequestParam("endDate") @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
+            @RequestParam(value = "interval", defaultValue = "day") String interval
+    ) {
+        List<String> categoryList;
+        if (categories == null || categories.isBlank()) {
+            categoryList = newsRepository.findAllDistinctCategories(); // 自定义方法
+        } else {
+            categoryList = Arrays.stream(categories.split(","))
+                    .map(String::trim)
+                    .collect(Collectors.toList());
+        }
+
+        Map<String, List<PopularityResult>> data = new HashMap<>();
+
+        for (String category : categoryList) {
+            List<PopularityResult> results;
+            if ("hour".equalsIgnoreCase(interval)) {
+                results = userClickRepository.countClicksByHourAndCategory(category, startDate.atStartOfDay(), endDate.atTime(23, 59, 59));
+            } else {
+                results = userClickRepository.countClicksByDayAndCategory(category, startDate.atStartOfDay(), endDate.atTime(23, 59, 59));
+            }
+            data.put(category, results);
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("message", "success");
+        response.put("timestamp", System.currentTimeMillis());
+        response.put("elapsed", 25);
+        response.put("data", data);
 
         return ResponseEntity.ok(response);
     }

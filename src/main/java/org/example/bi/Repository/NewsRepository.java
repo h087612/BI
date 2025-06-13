@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
+
 public interface NewsRepository extends JpaRepository<News, String> {
 
     @Query("SELECT n FROM News n WHERE " +
@@ -21,5 +23,9 @@ public interface NewsRepository extends JpaRepository<News, String> {
             @Param("searchText") String searchText,
             Pageable pageable
     );
+
+    @Query("SELECT DISTINCT s.category FROM News s")
+    List<String> findAllDistinctCategories();
+
 
 }
