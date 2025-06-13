@@ -5,9 +5,21 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
 public interface NewsRepository extends JpaRepository<News, String> {
 
-    Page<News> findByCategoryContainingIgnoreCaseAndTopicContainingIgnoreCaseAndHeadlineContainingIgnoreCaseOrTitleEntityContainingIgnoreCase(
-            String category, String topic, String headlineKeyword, String entityKeyword, Pageable pageable
+    @Query("SELECT n FROM News n WHERE " +
+            "LOWER(n.category) LIKE LOWER(CONCAT('%', :category, '%')) AND " +
+            "LOWER(n.topic) LIKE LOWER(CONCAT('%', :topic, '%')) AND (" +
+            "LOWER(n.headline) LIKE LOWER(CONCAT('%', :searchText, '%')) OR " +
+            "LOWER(n.titleEntity) LIKE LOWER(CONCAT('%', :searchText, '%')))")
+    Page<News> searchNews(
+            @Param("category") String category,
+            @Param("topic") String topic,
+            @Param("searchText") String searchText,
+            Pageable pageable
     );
+
 }

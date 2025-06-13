@@ -2,13 +2,21 @@ package org.example.bi.Controller;
 
 
 import jakarta.annotation.Resource;
+import org.example.bi.DTO.PopularityResult;
 import org.example.bi.Entity.News;
 import org.example.bi.Repository.NewsRepository;
+import org.example.bi.Repository.UserClickRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.*;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 @RestController
 @RequestMapping("/news")
@@ -16,6 +24,9 @@ public class NewsController {
 
     @Resource
     private NewsRepository newsRepository;
+    @Autowired
+    private UserClickRepository userClickRepository;
+
 
     // 获取新闻列表
     @GetMapping
@@ -34,9 +45,7 @@ public class NewsController {
         Pageable pageable = PageRequest.of(page - 1, Math.min(pageSize, 100), sort);
 
         Page<News> newsPage = newsRepository
-                .findByCategoryContainingIgnoreCaseAndTopicContainingIgnoreCaseAndHeadlineContainingIgnoreCaseOrTitleEntityContainingIgnoreCase(
-                        category, topic, searchText, searchText, pageable
-                );
+                .searchNews(category, topic, searchText, pageable);
 
         Map<String, Object> response = new HashMap<>();
         response.put("code", 200);
@@ -61,7 +70,7 @@ public class NewsController {
     }
 
     // 获取单条新闻详情
-    @GetMapping("/news/{newsId}")
+    @GetMapping("/{newsId}")
     public Map<String, Object> getNewsDetail(@PathVariable String newsId) {
         long start = System.currentTimeMillis();
         News news = newsRepository.findById(newsId).orElse(null);
@@ -84,5 +93,33 @@ public class NewsController {
         }
 
         return response;
+    }
+
+    @GetMapping("/{newsId}/popularity")
+    public ResponseEntity<?> getNewsPopularity(
+            @PathVariable String newsId,
+            @RequestParam("startDate") @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
+            @RequestParam("endDate") @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
+            @RequestParam(value = "interval", defaultValue = "day") String interval
+    ) {
+        LocalDateTime start = startDate.atStartOfDay();
+        LocalDateTime end = endDate.atTime(23, 59, 59);
+
+        List<PopularityResult> result;
+
+        if ("hour".equalsIgnoreCase(interval)) {
+            result = userClickRepository.countByHour(newsId, start, end);
+        } else {
+            result = userClickRepository.countByDay(newsId, start, end);
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("message", "success");
+        response.put("timestamp", System.currentTimeMillis());
+        response.put("elapsed", 20); // 可换成实际耗时
+        response.put("data", result);
+
+        return ResponseEntity.ok(response);
     }
 }
