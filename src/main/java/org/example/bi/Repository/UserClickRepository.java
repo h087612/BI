@@ -58,7 +58,9 @@ public interface UserClickRepository extends JpaRepository<UserClick,Long> {
                                         @Param("start") LocalDateTime start,
                                         @Param("end") LocalDateTime end);
 
-
-
+    @Query(value = "SELECT DISTINCT user_id FROM user_clicklog ORDER BY user_id", 
+           countQuery = "SELECT COUNT(DISTINCT user_id) FROM user_clicklog",
+           nativeQuery = true)
+    org.springframework.data.domain.Page<String> findAllDistinctUserIds(org.springframework.data.domain.Pageable pageable);
 
 }

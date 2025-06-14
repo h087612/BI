@@ -68,12 +68,33 @@ public class NewsController {
     ) {
         long start = System.currentTimeMillis();
 
-        Sort sort = Sort.by("publishTime");
-        sort = sortOrder.equalsIgnoreCase("asc") ? sort.ascending() : sort.descending();
-        Pageable pageable = PageRequest.of(page - 1, Math.min(pageSize, 100), sort);
-
-        Page<News> newsPage = newsRepository
-                .searchNews(category, topic, searchText, pageable);
+        Sort sort;
+        Pageable pageable;
+        
+        // 智能选择查询策略
+        Page<News> newsPage;
+        if (shouldUseFulltext(searchText)) {
+            // 对于原生查询，需要使用数据库列名
+            sort = Sort.by("publish_time");
+            sort = sortOrder.equalsIgnoreCase("asc") ? sort.ascending() : sort.descending();
+            pageable = PageRequest.of(page - 1, Math.min(pageSize, 100), sort);
+            try {
+                newsPage = newsRepository.searchNewsWithFulltext(category, topic, searchText, pageable);
+            } catch (Exception e) {
+                // 如果全文索引不存在，回退到LIKE查询
+                System.out.println("全文索引查询失败，回退到LIKE查询: " + e.getMessage());
+                sort = Sort.by("publishTime");
+                sort = sortOrder.equalsIgnoreCase("asc") ? sort.ascending() : sort.descending();
+                pageable = PageRequest.of(page - 1, Math.min(pageSize, 100), sort);
+                newsPage = newsRepository.searchNews(category, topic, searchText, pageable);
+            }
+        } else {
+            // 对于JPQL查询，使用实体属性名
+            sort = Sort.by("publishTime");
+            sort = sortOrder.equalsIgnoreCase("asc") ? sort.ascending() : sort.descending();
+            pageable = PageRequest.of(page - 1, Math.min(pageSize, 100), sort);
+            newsPage = newsRepository.searchNews(category, topic, searchText, pageable);
+        }
 
         Map<String, Object> response = new HashMap<>();
         response.put("code", 200);
@@ -95,6 +116,42 @@ public class NewsController {
 
         response.put("data", data);
         return response;
+    }
+
+    /**
+     * 判断是否应该使用全文索引
+     * @param searchText 搜索文本
+     * @return true 使用全文索引, false 使用 LIKE 查询
+     */
+    private boolean shouldUseFulltext(String searchText) {
+        if (searchText == null || searchText.trim().isEmpty()) {
+            return false;
+        }
+        
+        String trimmed = searchText.trim();
+        
+        // 1. 长度小于3个字符，使用LIKE（MySQL全文索引默认最小词长为3）
+        if (trimmed.length() < 3) {
+            return false;
+        }
+        
+        // 2. 包含特殊字符或通配符，使用LIKE
+        if (trimmed.matches(".*[%_*?\\[\\](){}|\\\\].*")) {
+            return false;
+        }
+        
+        // 3. 纯数字或包含大量标点符号，使用LIKE
+        if (trimmed.matches("^\\d+$") || trimmed.matches(".*[!@#$&+=:;\"'<>,.]+.*")) {
+            return false;
+        }
+        
+        // 4. 单个词且长度小于4，使用LIKE（避免全文索引的停用词问题）
+        if (!trimmed.contains(" ") && trimmed.length() < 4) {
+            return false;
+        }
+        
+        // 5. 其他情况使用全文索引（自然语言查询）
+        return true;
     }
 
     // 获取单条新闻详情
@@ -288,7 +345,7 @@ public class NewsController {
             }
 
             // 2.2 已读 / 不喜欢 Set
-            keys.add("user_seen_news:"    + userId);
+            keys.add("user_seen_news:" + userId);
             keys.add("user_dislike_news:" + userId);
 
             // 2.3 最后一个 ARGV = topN
@@ -340,7 +397,6 @@ public class NewsController {
             return resp;
         }
     }
-    @
 
     @GetMapping("/recommend/rank")
     public ResponseEntity<?> getRankedNews(
@@ -400,6 +456,7 @@ public class NewsController {
             item.put("publishDate", news.getPublishTime());
             result.add(item);
         }
+
 
         Map<String, Object> response = new HashMap<>();
         response.put("code", 200);
