@@ -23,6 +23,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.WeekFields;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -37,6 +38,7 @@ public class NewsController {
     @Resource
     private StringRedisTemplate stringRedisTemplate;
     private DefaultRedisScript<List> recommendScript;
+    private DefaultRedisScript<List> popularityScript;
 
     @Autowired
     private UserClickRepository userClickRepository;
@@ -49,6 +51,10 @@ public class NewsController {
         recommendScript = new DefaultRedisScript<>();
         recommendScript.setLocation(new ClassPathResource("recommend_v2.lua")); // resources/recommend.lua
         recommendScript.setResultType(List.class);                          // 返回 List<String>
+
+        popularityScript = new DefaultRedisScript<>();
+        popularityScript.setLocation(new ClassPathResource("daily_clicks.lua"));
+        popularityScript.setResultType(List.class);
     }
     // 获取新闻列表
     @GetMapping
@@ -127,12 +133,50 @@ public class NewsController {
         LocalDateTime start = startDate.atStartOfDay();
         LocalDateTime end = endDate.atTime(23, 59, 59);
 
-        List<PopularityResult> result;
+        DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+        List<PopularityResult> result = new ArrayList<>();
 
         if ("hour".equalsIgnoreCase(interval)) {
             result = userClickRepository.countByHour(newsId, start, end);
         } else {
-            result = userClickRepository.countByDay(newsId, start, end);
+            // 日粒度使用 Lua 脚本从 Redis 获取
+            DateTimeFormatter redisKeyFormatter = DateTimeFormatter.ofPattern("yyyyMMdd");
+            List<String> keys = new ArrayList<>();
+            List<LocalDate> dates = new ArrayList<>();
+
+            // 收集日期和对应的 Redis 键
+            LocalDate currentDate = startDate;
+            while (!currentDate.isAfter(endDate)) {
+                keys.add("news_hot_rank_daily:" + currentDate.format(redisKeyFormatter));
+                dates.add(currentDate);
+                currentDate = currentDate.plus(1, ChronoUnit.DAYS);
+            }
+
+            // 执行 Lua 脚本
+            @SuppressWarnings("unchecked")
+            List<String> scores = (List<String>) stringRedisTemplate.execute(
+                    popularityScript,
+                    keys,
+                    newsId
+            );
+
+            // 解析结果，转换为 PopularityResult 接口的匿名实现
+            for (int i = 0; i < scores.size(); i++) {
+                final String dateStr = dates.get(i).format(dateFormatter);
+                final long clickCount = Long.parseLong(scores.get(i));
+                result.add(new PopularityResult() {
+                    @Override
+                    public String getDate() {
+                        return dateStr;
+                    }
+
+                    @Override
+                    public Long getCount() {
+                        return clickCount;
+                    }
+                });
+            }
         }
 
         Map<String, Object> response = new HashMap<>();
@@ -368,5 +412,4 @@ public class NewsController {
 
         return ResponseEntity.ok(response);
     }
-
 }
