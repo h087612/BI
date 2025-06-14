@@ -13,11 +13,22 @@ import java.util.List;
 public interface NewsRepository extends JpaRepository<News, String> {
 
     @Query("SELECT n FROM News n WHERE " +
-            "LOWER(n.category) LIKE LOWER(CONCAT('%', :category, '%')) AND " +
-            "LOWER(n.topic) LIKE LOWER(CONCAT('%', :topic, '%')) AND (" +
-            "LOWER(n.headline) LIKE LOWER(CONCAT('%', :searchText, '%')) OR " +
-            "LOWER(n.titleEntity) LIKE LOWER(CONCAT('%', :searchText, '%')))")
+            "(:category = '' OR n.category = :category) AND " +
+            "(:topic = '' OR n.topic = :topic) AND " +
+            "(:searchText = '' OR LOWER(n.headline) LIKE LOWER(CONCAT('%', :searchText, '%')))")
     Page<News> searchNews(
+            @Param("category") String category,
+            @Param("topic") String topic,
+            @Param("searchText") String searchText,
+            Pageable pageable
+    );
+
+    @Query(value = "SELECT * FROM static_news n WHERE " +
+            "(:category = '' OR n.category = :category) AND " +
+            "(:topic = '' OR n.topic = :topic) AND " +
+            "(:searchText = '' OR MATCH(n.headline) AGAINST(:searchText IN NATURAL LANGUAGE MODE))",
+            nativeQuery = true)
+    Page<News> searchNewsWithFulltext(
             @Param("category") String category,
             @Param("topic") String topic,
             @Param("searchText") String searchText,
