@@ -10,7 +10,9 @@ import org.example.bi.Repository.UserClickRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.domain.*;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +23,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.WeekFields;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -34,15 +38,23 @@ public class NewsController {
     @Resource
     private StringRedisTemplate stringRedisTemplate;
     private DefaultRedisScript<List> recommendScript;
+    private DefaultRedisScript<List> popularityScript;
 
     @Autowired
     private UserClickRepository userClickRepository;
+
+    @Autowired
+    private RedisTemplate<String, String> redisTemplate;
 
     @PostConstruct
     public void initLua() {
         recommendScript = new DefaultRedisScript<>();
         recommendScript.setLocation(new ClassPathResource("recommend_v2.lua")); // resources/recommend.lua
         recommendScript.setResultType(List.class);                          // 返回 List<String>
+
+        popularityScript = new DefaultRedisScript<>();
+        popularityScript.setLocation(new ClassPathResource("daily_clicks.lua"));
+        popularityScript.setResultType(List.class);
     }
     // 获取新闻列表
     @GetMapping
@@ -178,12 +190,50 @@ public class NewsController {
         LocalDateTime start = startDate.atStartOfDay();
         LocalDateTime end = endDate.atTime(23, 59, 59);
 
-        List<PopularityResult> result;
+        DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+        List<PopularityResult> result = new ArrayList<>();
 
         if ("hour".equalsIgnoreCase(interval)) {
             result = userClickRepository.countByHour(newsId, start, end);
         } else {
-            result = userClickRepository.countByDay(newsId, start, end);
+            // 日粒度使用 Lua 脚本从 Redis 获取
+            DateTimeFormatter redisKeyFormatter = DateTimeFormatter.ofPattern("yyyyMMdd");
+            List<String> keys = new ArrayList<>();
+            List<LocalDate> dates = new ArrayList<>();
+
+            // 收集日期和对应的 Redis 键
+            LocalDate currentDate = startDate;
+            while (!currentDate.isAfter(endDate)) {
+                keys.add("news_hot_rank_daily:" + currentDate.format(redisKeyFormatter));
+                dates.add(currentDate);
+                currentDate = currentDate.plus(1, ChronoUnit.DAYS);
+            }
+
+            // 执行 Lua 脚本
+            @SuppressWarnings("unchecked")
+            List<String> scores = (List<String>) stringRedisTemplate.execute(
+                    popularityScript,
+                    keys,
+                    newsId
+            );
+
+            // 解析结果，转换为 PopularityResult 接口的匿名实现
+            for (int i = 0; i < scores.size(); i++) {
+                final String dateStr = dates.get(i).format(dateFormatter);
+                final long clickCount = Long.parseLong(scores.get(i));
+                result.add(new PopularityResult() {
+                    @Override
+                    public String getDate() {
+                        return dateStr;
+                    }
+
+                    @Override
+                    public Long getCount() {
+                        return clickCount;
+                    }
+                });
+            }
         }
 
         Map<String, Object> response = new HashMap<>();
@@ -348,4 +398,73 @@ public class NewsController {
         }
     }
 
+    @GetMapping("/recommend/rank")
+    public ResponseEntity<?> getRankedNews(
+            @RequestParam(defaultValue = "daily") String period, // 可选值: daily, weekly, all
+            @RequestParam(defaultValue = "10") int limit,
+            @RequestParam(required = false) String date // 可选: yyyyMMdd
+    ) {
+        long start = System.currentTimeMillis();
+
+        String redisKey;
+        if ("daily".equalsIgnoreCase(period)) {
+            String dateStr = date != null ? date : LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            redisKey = "news_hot_rank_daily:" + dateStr;
+        } else if ("weekly".equalsIgnoreCase(period)) {
+            // 传入格式：yyyyMMdd，计算 ISO 周
+            LocalDate dateObj;
+            if (date != null) {
+                dateObj = LocalDate.parse(date, DateTimeFormatter.ofPattern("yyyyMMdd"));
+            } else {
+                dateObj = LocalDate.now();
+            }
+            int weekNumber = dateObj.get(WeekFields.ISO.weekOfWeekBasedYear());
+            int weekYear = dateObj.get(WeekFields.ISO.weekBasedYear());
+            String weekStr = String.format("%04d%02d", weekYear, weekNumber);
+            redisKey = "news_hot_rank_weekly:" + weekStr;
+        } else {
+            redisKey = "news_hot_rank_all";
+        }
+
+        Set<ZSetOperations.TypedTuple<String>> newsSet =
+                redisTemplate.opsForZSet().reverseRangeWithScores(redisKey, 0, limit - 1);
+
+        if (newsSet == null || newsSet.isEmpty()) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "no news found");
+            response.put("data", List.of());
+            return ResponseEntity.ok(response);
+        }
+
+        // 提取新闻 ID
+        List<String> newsIds = newsSet.stream()
+                .map(ZSetOperations.TypedTuple::getValue)
+                .collect(Collectors.toList());
+
+        // 查询 MySQL 获取详情（仅返回部分字段）
+        List<News> newsList = newsRepository.findSimpleInfoByIds(newsIds);
+
+        // 构建响应数据
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (News news : newsList) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("id", news.getId());
+            item.put("category", news.getCategory());
+            item.put("topic", news.getTopic());
+            item.put("headline", news.getHeadline());
+            item.put("publishDate", news.getPublishTime());
+            result.add(item);
+        }
+
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("message", "success");
+        response.put("timestamp", System.currentTimeMillis());
+        response.put("elapsed", System.currentTimeMillis() - start);
+        response.put("data", result);
+
+        return ResponseEntity.ok(response);
+    }
 }

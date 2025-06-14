@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface NewsRepository extends JpaRepository<News, String> {
@@ -38,5 +39,7 @@ public interface NewsRepository extends JpaRepository<News, String> {
     @Query("SELECT DISTINCT s.category FROM News s")
     List<String> findAllDistinctCategories();
 
+    @Query("SELECT n FROM News n WHERE n.id IN :ids")
+    List<News> findSimpleInfoByIds(@Param("ids") List<String> ids);
 
 }
