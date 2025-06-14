@@ -30,5 +30,4 @@ public class UserClick {
 
     @Column(name = "dwell_time")
     private Integer dwellTime;
-
 }
