@@ -187,63 +187,79 @@ public class NewsController {
             @RequestParam("endDate") @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
             @RequestParam(value = "interval", defaultValue = "day") String interval
     ) {
-        LocalDateTime start = startDate.atStartOfDay();
-        LocalDateTime end = endDate.atTime(23, 59, 59);
+        long startTime = System.currentTimeMillis();
+        
+        try {
+            List<PopularityResult> result = new ArrayList<>();
+            DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            
+            if ("hour".equalsIgnoreCase(interval)) {
+                // 小时粒度暂时还是用数据库
+                LocalDateTime start = startDate.atStartOfDay();
+                LocalDateTime end = endDate.atTime(23, 59, 59);
+                result = userClickRepository.countByHour(newsId, start, end);
+            } else {
+                // 日粒度完全使用 Redis
+                DateTimeFormatter redisKeyFormatter = DateTimeFormatter.ofPattern("yyyyMMdd");
+                LocalDate currentDate = startDate;
+                
+                // 批量获取多天数据
+                List<String> keys = new ArrayList<>();
+                List<LocalDate> dates = new ArrayList<>();
+                
+                while (!currentDate.isAfter(endDate)) {
+                    String dayStr = currentDate.format(redisKeyFormatter);
+                    keys.add("news_hot_rank_daily:" + dayStr);
+                    dates.add(currentDate);
+                    currentDate = currentDate.plusDays(1);
+                }
 
-        DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+                // 使用 Pipeline 批量查询，提高性能
+                List<Object> pipelineResults = stringRedisTemplate.executePipelined(
+                    (org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
+                        for (String key : keys) {
+                            connection.zSetCommands().zScore(key.getBytes(), newsId.getBytes());
+                        }
+                        return null;
+                    });
+                
+                // 组装结果
+                for (int i = 0; i < dates.size(); i++) {
+                    final String dateStr = dates.get(i).format(dateFormatter);
+                    Double score = (Double) pipelineResults.get(i);
+                    final long clickCount = score != null ? score.longValue() : 0L;
+                    
+                    result.add(new PopularityResult() {
+                        @Override
+                        public String getDate() {
+                            return dateStr;
+                        }
 
-        List<PopularityResult> result = new ArrayList<>();
-
-        if ("hour".equalsIgnoreCase(interval)) {
-            result = userClickRepository.countByHour(newsId, start, end);
-        } else {
-            // 日粒度使用 Lua 脚本从 Redis 获取
-            DateTimeFormatter redisKeyFormatter = DateTimeFormatter.ofPattern("yyyyMMdd");
-            List<String> keys = new ArrayList<>();
-            List<LocalDate> dates = new ArrayList<>();
-
-            // 收集日期和对应的 Redis 键
-            LocalDate currentDate = startDate;
-            while (!currentDate.isAfter(endDate)) {
-                keys.add("news_hot_rank_daily:" + currentDate.format(redisKeyFormatter));
-                dates.add(currentDate);
-                currentDate = currentDate.plus(1, ChronoUnit.DAYS);
+                        @Override
+                        public Long getCount() {
+                            return clickCount;
+                        }
+                    });
+                }
             }
-
-            // 执行 Lua 脚本
-            @SuppressWarnings("unchecked")
-            List<String> scores = (List<String>) stringRedisTemplate.execute(
-                    popularityScript,
-                    keys,
-                    newsId
-            );
-
-            // 解析结果，转换为 PopularityResult 接口的匿名实现
-            for (int i = 0; i < scores.size(); i++) {
-                final String dateStr = dates.get(i).format(dateFormatter);
-                final long clickCount = Long.parseLong(scores.get(i));
-                result.add(new PopularityResult() {
-                    @Override
-                    public String getDate() {
-                        return dateStr;
-                    }
-
-                    @Override
-                    public Long getCount() {
-                        return clickCount;
-                    }
-                });
-            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "success");
+            response.put("timestamp", Instant.now().toEpochMilli());
+            response.put("elapsed", System.currentTimeMillis() - startTime);
+            response.put("data", result);
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 500);
+            response.put("message", "Error: " + e.getMessage());
+            response.put("timestamp", Instant.now().toEpochMilli());
+            response.put("elapsed", System.currentTimeMillis() - startTime);
+            return ResponseEntity.status(500).body(response);
         }
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("code", 200);
-        response.put("message", "success");
-        response.put("timestamp", System.currentTimeMillis());
-        response.put("elapsed", 20); // 可换成实际耗时
-        response.put("data", result);
-
-        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/categories/popularity")
@@ -253,35 +269,96 @@ public class NewsController {
             @RequestParam("endDate") @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
             @RequestParam(value = "interval", defaultValue = "day") String interval
     ) {
-        List<String> categoryList;
-        if (categories == null || categories.isBlank()) {
-            categoryList = newsRepository.findAllDistinctCategories(); // 自定义方法
-        } else {
-            categoryList = Arrays.stream(categories.split(","))
-                    .map(String::trim)
-                    .collect(Collectors.toList());
-        }
-
-        Map<String, List<PopularityResult>> data = new HashMap<>();
-
-        for (String category : categoryList) {
-            List<PopularityResult> results;
-            if ("hour".equalsIgnoreCase(interval)) {
-                results = userClickRepository.countClicksByHourAndCategory(category, startDate.atStartOfDay(), endDate.atTime(23, 59, 59));
+        long startTime = System.currentTimeMillis();
+        
+        try {
+            List<String> categoryList;
+            if (categories == null || categories.isBlank()) {
+                categoryList = newsRepository.findAllDistinctCategories();
             } else {
-                results = userClickRepository.countClicksByDayAndCategory(category, startDate.atStartOfDay(), endDate.atTime(23, 59, 59));
+                categoryList = Arrays.stream(categories.split(","))
+                        .map(String::trim)
+                        .collect(Collectors.toList());
             }
-            data.put(category, results);
+
+            Map<String, List<PopularityResult>> data = new HashMap<>();
+            DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+            if ("hour".equalsIgnoreCase(interval)) {
+                // 小时粒度暂时还是用数据库
+                for (String category : categoryList) {
+                    List<PopularityResult> results = userClickRepository.countClicksByHourAndCategory(
+                            category, startDate.atStartOfDay(), endDate.atTime(23, 59, 59));
+                    data.put(category, results);
+                }
+            } else {
+                // 日粒度使用 Redis
+                DateTimeFormatter redisKeyFormatter = DateTimeFormatter.ofPattern("yyyyMMdd");
+                
+                for (String category : categoryList) {
+                    List<PopularityResult> results = new ArrayList<>();
+                    LocalDate currentDate = startDate;
+                    
+                    // 批量获取多天数据
+                    List<String> keys = new ArrayList<>();
+                    List<LocalDate> dates = new ArrayList<>();
+                    
+                    while (!currentDate.isAfter(endDate)) {
+                        String dayStr = currentDate.format(redisKeyFormatter);
+                        keys.add("cate_hot_rank_daily:" + dayStr);
+                        dates.add(currentDate);
+                        currentDate = currentDate.plusDays(1);
+                    }
+                    
+                    // 使用 Pipeline 批量查询
+                    List<Object> pipelineResults = stringRedisTemplate.executePipelined(
+                        (org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
+                            for (String key : keys) {
+                                connection.zSetCommands().zScore(key.getBytes(), category.getBytes());
+                            }
+                            return null;
+                        });
+                    
+                    // 组装结果
+                    for (int i = 0; i < dates.size(); i++) {
+                        final String dateStr = dates.get(i).format(dateFormatter);
+                        Double score = (Double) pipelineResults.get(i);
+                        final long clickCount = score != null ? score.longValue() : 0L;
+                        
+                        results.add(new PopularityResult() {
+                            @Override
+                            public String getDate() {
+                                return dateStr;
+                            }
+
+                            @Override
+                            public Long getCount() {
+                                return clickCount;
+                            }
+                        });
+                    }
+                    
+                    data.put(category, results);
+                }
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "success");
+            response.put("timestamp", Instant.now().toEpochMilli());
+            response.put("elapsed", System.currentTimeMillis() - startTime);
+            response.put("data", data);
+
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 500);
+            response.put("message", "Error: " + e.getMessage());
+            response.put("timestamp", Instant.now().toEpochMilli());
+            response.put("elapsed", System.currentTimeMillis() - startTime);
+            return ResponseEntity.status(500).body(response);
         }
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("code", 200);
-        response.put("message", "success");
-        response.put("timestamp", System.currentTimeMillis());
-        response.put("elapsed", 25);
-        response.put("data", data);
-
-        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/users/{userId}/recommendations")
