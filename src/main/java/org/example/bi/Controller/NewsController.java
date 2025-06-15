@@ -40,6 +40,9 @@ public class NewsController {
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    
+    // 缓存最新新闻的KEY
+    private static final String LATEST_NEWS_CACHE_KEY = "news:latest:cache";
     private DefaultRedisScript<List> recommendScript;
     private DefaultRedisScript<List> popularityScript;
     private static final LocalDate DATA_MIN_DATE = LocalDate.parse("2019-06-13");
@@ -72,6 +75,15 @@ public class NewsController {
             @RequestParam(required = false, defaultValue = "desc") String sortOrder
     ) {
         long start = System.currentTimeMillis();
+        
+        // 优化：无参数时，从Redis获取热门新闻
+        if (category.isEmpty() && topic.isEmpty() && searchText.isEmpty() && page == 1 && pageSize <= 20) {
+            Map<String, Object> cachedResponse = getHotNewsFromRedis(pageSize);
+            if (cachedResponse != null) {
+                cachedResponse.put("elapsed", System.currentTimeMillis() - start);
+                return cachedResponse;
+            }
+        }
 
         Sort sort;
         Pageable pageable;
@@ -366,53 +378,6 @@ public class NewsController {
         }
     }
 
-    @GetMapping("/statistics")
-    public ResponseEntity<?> getStatistics(
-            @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate,
-            @RequestParam(required = false) String category,
-            @RequestParam(required = false) Integer titleLengthMin,
-            @RequestParam(required = false) Integer titleLengthMax,
-            @RequestParam(required = false) Integer contentLengthMin,
-            @RequestParam(required = false) Integer contentLengthMax,
-            @RequestParam(required = false) String userId,
-            @RequestParam(required = false) String userIds
-    ) {
-        long startTime = System.currentTimeMillis();
-
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        LocalDateTime startDateTime = null;
-        LocalDateTime endDateTime = null;
-
-        if (startDate != null && !startDate.isBlank()) {
-            startDateTime = LocalDate.parse(startDate, formatter).atStartOfDay();
-        }
-        if (endDate != null && !endDate.isBlank()) {
-            endDateTime = LocalDate.parse(endDate, formatter).plusDays(1).atStartOfDay().minusNanos(1);
-        }
-
-        // 构建动态条件
-        List<String> userIdList = new ArrayList<>();
-        if (userId != null && !userId.isBlank()) userIdList.add(userId);
-        if (userIds != null && !userIds.isBlank()) {
-            userIdList.addAll(Arrays.asList(userIds.split(",")));
-        }
-
-        List<ClickStatDto> results = userClickRepository.getStatistics(
-                startDateTime, endDateTime, category, titleLengthMin, titleLengthMax,
-                contentLengthMin, contentLengthMax, userIdList.isEmpty() ? null : userIdList
-        );
-        long elapsed = System.currentTimeMillis() - startTime;
-        Map<String, Object> response = new HashMap<>();
-        response.put("code", 200);
-        response.put("message", "success");
-        response.put("timestamp", System.currentTimeMillis());
-        response.put("elapsed", elapsed);
-        response.put("data", results);
-
-        return ResponseEntity.ok(response);
-    }
-
     @GetMapping("/users/{userId}/recommendations")
     public Map<String, Object> recommendForUser(
             @PathVariable String userId,
@@ -617,5 +582,72 @@ public class NewsController {
         response.put("data", result);
 
         return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * 从Redis获取热门新闻（用于无参数查询的优化）
+     */
+    private Map<String, Object> getHotNewsFromRedis(int limit) {
+        try {
+            // 使用当天的热榜数据
+            String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            String redisKey = "news_hot_rank_daily:" + today;
+            
+            // 获取热门新闻ID
+            Set<ZSetOperations.TypedTuple<String>> hotNews = 
+                stringRedisTemplate.opsForZSet().reverseRangeWithScores(redisKey, 0, limit - 1);
+            
+            if (hotNews == null || hotNews.isEmpty()) {
+                // 如果今天没有数据，尝试获取总榜数据
+                redisKey = "news_hot_rank_all";
+                hotNews = stringRedisTemplate.opsForZSet().reverseRangeWithScores(redisKey, 0, limit - 1);
+            }
+            
+            if (hotNews != null && !hotNews.isEmpty()) {
+                // 提取新闻ID
+                List<String> newsIds = hotNews.stream()
+                    .map(ZSetOperations.TypedTuple::getValue)
+                    .collect(Collectors.toList());
+                
+                // 批量查询新闻详情
+                List<News> newsList = newsRepository.findAllById(newsIds);
+                Map<String, News> newsMap = newsList.stream()
+                    .collect(Collectors.toMap(News::getId, news -> news));
+                
+                // 按热度顺序构建响应
+                List<Map<String, Object>> items = new ArrayList<>();
+                for (ZSetOperations.TypedTuple<String> tuple : hotNews) {
+                    News news = newsMap.get(tuple.getValue());
+                    if (news != null) {
+                        items.add(Map.of(
+                            "id", news.getId(),
+                            "category", news.getCategory(),
+                            "topic", news.getTopic(),
+                            "headline", news.getHeadline(),
+                            "publishDate", news.getPublishTime()
+                        ));
+                    }
+                }
+                
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", 200);
+                response.put("message", "success (cached)");
+                response.put("timestamp", Instant.now().toEpochMilli());
+                
+                Map<String, Object> data = new HashMap<>();
+                data.put("total", items.size());
+                data.put("page", 1);
+                data.put("pageSize", items.size());
+                data.put("items", items);
+                
+                response.put("data", data);
+                return response;
+            }
+        } catch (Exception e) {
+            // 如果Redis查询失败，回退到MySQL查询
+            System.out.println("Redis查询失败，回退到MySQL: " + e.getMessage());
+        }
+        
+        return null;
     }
 }
