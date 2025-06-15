@@ -17,5 +17,5 @@ public class QueryLog {
     private String sqlText;
 
     @Column(name = "query_time")
-    private LocalDateTime queryTime;
+    private Long queryTime;
 }
