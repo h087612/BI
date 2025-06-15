@@ -77,8 +77,8 @@ public class NewsController {
         long start = System.currentTimeMillis();
         
         // 优化：无参数时，从Redis获取热门新闻
-        if (category.isEmpty() && topic.isEmpty() && searchText.isEmpty() && page == 1 && pageSize <= 20) {
-            Map<String, Object> cachedResponse = getHotNewsFromRedis(pageSize);
+        if (category.isEmpty() && topic.isEmpty() && searchText.isEmpty()) {
+            Map<String, Object> cachedResponse = getHotNewsFromRedis(page, pageSize);
             if (cachedResponse != null) {
                 cachedResponse.put("elapsed", System.currentTimeMillis() - start);
                 return cachedResponse;
@@ -587,61 +587,70 @@ public class NewsController {
     /**
      * 从Redis获取热门新闻（用于无参数查询的优化）
      */
-    private Map<String, Object> getHotNewsFromRedis(int limit) {
+    private Map<String, Object> getHotNewsFromRedis(int page, int pageSize) {
         try {
             // 使用当天的热榜数据
             String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
             String redisKey = "news_hot_rank_daily:" + today;
             
-            // 获取热门新闻ID
-            Set<ZSetOperations.TypedTuple<String>> hotNews = 
-                stringRedisTemplate.opsForZSet().reverseRangeWithScores(redisKey, 0, limit - 1);
+            // 先获取总数
+            Long totalCount = stringRedisTemplate.opsForZSet().zCard(redisKey);
             
-            if (hotNews == null || hotNews.isEmpty()) {
+            if (totalCount == null || totalCount == 0) {
                 // 如果今天没有数据，尝试获取总榜数据
                 redisKey = "news_hot_rank_all";
-                hotNews = stringRedisTemplate.opsForZSet().reverseRangeWithScores(redisKey, 0, limit - 1);
+                totalCount = stringRedisTemplate.opsForZSet().zCard(redisKey);
             }
             
-            if (hotNews != null && !hotNews.isEmpty()) {
-                // 提取新闻ID
-                List<String> newsIds = hotNews.stream()
-                    .map(ZSetOperations.TypedTuple::getValue)
-                    .collect(Collectors.toList());
+            if (totalCount != null && totalCount > 0) {
+                // 计算分页偏移量
+                long start = (long) (page - 1) * pageSize;
+                long end = start + pageSize - 1;
                 
-                // 批量查询新闻详情
-                List<News> newsList = newsRepository.findAllById(newsIds);
-                Map<String, News> newsMap = newsList.stream()
-                    .collect(Collectors.toMap(News::getId, news -> news));
+                // 获取当前页的热门新闻ID
+                Set<ZSetOperations.TypedTuple<String>> hotNews = 
+                    stringRedisTemplate.opsForZSet().reverseRangeWithScores(redisKey, start, end);
                 
-                // 按热度顺序构建响应
-                List<Map<String, Object>> items = new ArrayList<>();
-                for (ZSetOperations.TypedTuple<String> tuple : hotNews) {
-                    News news = newsMap.get(tuple.getValue());
-                    if (news != null) {
-                        items.add(Map.of(
-                            "id", news.getId(),
-                            "category", news.getCategory(),
-                            "topic", news.getTopic(),
-                            "headline", news.getHeadline(),
-                            "publishDate", news.getPublishTime()
-                        ));
+                if (hotNews != null && !hotNews.isEmpty()) {
+                    // 提取新闻ID
+                    List<String> newsIds = hotNews.stream()
+                        .map(ZSetOperations.TypedTuple::getValue)
+                        .collect(Collectors.toList());
+                    
+                    // 批量查询新闻详情
+                    List<News> newsList = newsRepository.findAllById(newsIds);
+                    Map<String, News> newsMap = newsList.stream()
+                        .collect(Collectors.toMap(News::getId, news -> news));
+                    
+                    // 按热度顺序构建响应
+                    List<Map<String, Object>> items = new ArrayList<>();
+                    for (ZSetOperations.TypedTuple<String> tuple : hotNews) {
+                        News news = newsMap.get(tuple.getValue());
+                        if (news != null) {
+                            items.add(Map.of(
+                                "id", news.getId(),
+                                "category", news.getCategory(),
+                                "topic", news.getTopic(),
+                                "headline", news.getHeadline(),
+                                "publishDate", news.getPublishTime()
+                            ));
+                        }
                     }
+                    
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("code", 200);
+                    response.put("message", "success (cached)");
+                    response.put("timestamp", Instant.now().toEpochMilli());
+                    
+                    Map<String, Object> data = new HashMap<>();
+                    data.put("total", totalCount); // 返回总数
+                    data.put("page", page);
+                    data.put("pageSize", items.size());
+                    data.put("items", items);
+                    
+                    response.put("data", data);
+                    return response;
                 }
-                
-                Map<String, Object> response = new HashMap<>();
-                response.put("code", 200);
-                response.put("message", "success (cached)");
-                response.put("timestamp", Instant.now().toEpochMilli());
-                
-                Map<String, Object> data = new HashMap<>();
-                data.put("total", items.size());
-                data.put("page", 1);
-                data.put("pageSize", items.size());
-                data.put("items", items);
-                
-                response.put("data", data);
-                return response;
             }
         } catch (Exception e) {
             // 如果Redis查询失败，回退到MySQL查询
