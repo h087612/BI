@@ -110,24 +110,35 @@ public class StatisticsController {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
         long total = 0;
         
+        System.out.println("=== calculateTotalClicksFromRedis Debug ===");
+        System.out.println("Date range: " + startDate + " to " + endDate);
+        
         LocalDate current = startDate;
         while (!current.isAfter(endDate)) {
             String dayKey = "news_hot_rank_daily:" + current.format(formatter);
+            
+            // 检查key是否存在
+            Boolean exists = stringRedisTemplate.hasKey(dayKey);
+            System.out.println("Checking key: " + dayKey + ", exists: " + exists);
             
             // 只统计总数，不获取详细数据
             Set<ZSetOperations.TypedTuple<String>> topNews = 
                 stringRedisTemplate.opsForZSet().reverseRangeWithScores(dayKey, 0, -1);
             
-            if (topNews != null) {
+            if (topNews != null && !topNews.isEmpty()) {
+                System.out.println("Found " + topNews.size() + " news for " + dayKey);
                 for (ZSetOperations.TypedTuple<String> tuple : topNews) {
                     if (tuple.getScore() != null) {
                         total += tuple.getScore().longValue();
                     }
                 }
+            } else {
+                System.out.println("No data found for " + dayKey);
             }
             current = current.plusDays(1);
         }
         
+        System.out.println("Total clicks: " + total);
         return total;
     }
     
@@ -169,22 +180,37 @@ public class StatisticsController {
     
     // 策略1：纯Redis查询 - 获取活跃用户
     private List<Map<String, Object>> getTopUsersFromRedis(LocalDate startDate, LocalDate endDate, int limit) {
+        System.out.println("=== getTopUsersFromRedis Debug ===");
+        
         // 方案1：从user_zset获取用户，然后统计他们的点击数
+        Long userZsetSize = stringRedisTemplate.opsForZSet().zCard("user_zset");
+        System.out.println("user_zset size: " + userZsetSize);
+        
         Set<String> topUsers = stringRedisTemplate.opsForZSet().range("user_zset", 0, 99);
         
         if (topUsers == null || topUsers.isEmpty()) {
+            System.out.println("No users found in user_zset");
             return new ArrayList<>();
         }
         
+        System.out.println("Found " + topUsers.size() + " users in user_zset");
+        
         Map<String, Long> userClickMap = new HashMap<>();
         
+        int checked = 0;
         for (String userId : topUsers) {
             // 获取用户已读新闻数量作为点击数
             Long clickCount = stringRedisTemplate.opsForSet().size("user_seen_news:" + userId);
             if (clickCount != null && clickCount > 0) {
                 userClickMap.put(userId, clickCount);
             }
+            checked++;
+            if (checked <= 5) {
+                System.out.println("User " + userId + " click count: " + clickCount);
+            }
         }
+        
+        System.out.println("Users with clicks: " + userClickMap.size());
         
         return userClickMap.entrySet().stream()
             .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))

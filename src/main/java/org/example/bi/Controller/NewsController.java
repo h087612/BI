@@ -450,6 +450,7 @@ public class NewsController {
                         Map<String, Object> m = new HashMap<>();
                         m.put("newsId", id);
                         m.put("headline", hMap.getOrDefault(id, ""));
+                        m.put("category",newsRepository.findById(id).get().getCategory());
                         return m;
                     })
                     .collect(Collectors.toList());
