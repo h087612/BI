@@ -1,0 +1,26 @@
+# LangChain核心依赖
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.10
+
+# API调用
+requests>=2.31.0
+
+# 数据验证
+pydantic>=2.0.0
+
+# Redis支持（用于记忆持久化）
+redis>=5.0.0
+
+# OpenAI
+openai>=1.0.0
+
+# 其他依赖
+python-dotenv>=1.0.0
+tiktoken>=0.5.0  # 用于token计算
+
+# 可选依赖（根据需要）
+# faiss-cpu>=1.7.4  # 向量数据库
+# chromadb>=0.4.0  # 另一个向量数据库选项
+# beautifulsoup4>=4.12.0  # 网页解析
+# pandas>=2.0.0  # 数据处理

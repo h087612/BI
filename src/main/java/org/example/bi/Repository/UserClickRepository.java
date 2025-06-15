@@ -80,6 +80,11 @@ public interface UserClickRepository extends JpaRepository<UserClick,Long> {
     Long countByUserId(@Param("userId") String userId);
 
 
+    @Query(value = "SELECT DISTINCT user_id FROM user_clicklog ORDER BY user_id", 
+           countQuery = "SELECT COUNT(DISTINCT user_id) FROM user_clicklog",
+           nativeQuery = true)
+    org.springframework.data.domain.Page<String> findAllDistinctUserIds(org.springframework.data.domain.Pageable pageable);
+
     @Query("""
         SELECT n.id AS newsId, n.category AS category, c.userId AS userId, COUNT(c.id) AS clickCount
         FROM UserClick  c

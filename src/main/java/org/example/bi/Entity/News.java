@@ -22,7 +22,6 @@ public class News {
 
     private String topic;
 
-    @Column(columnDefinition = "TEXT")
     private String headline;
 
     @Column(name = "body", columnDefinition = "LONGTEXT")
