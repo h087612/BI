@@ -531,19 +531,26 @@ public class NewsController {
     public ResponseEntity<?> getRankedNews(
             @RequestParam(defaultValue = "daily") String period, // 可选值: daily, weekly, all
             @RequestParam(defaultValue = "10") int limit,
-            @RequestParam(required = false) String date // 可选: yyyyMMdd
+            @RequestParam(required = false) String date // 可选: yyyy-MM-dd
     ) {
         long start = System.currentTimeMillis();
 
         String redisKey;
         if ("daily".equalsIgnoreCase(period)) {
-            String dateStr = date != null ? date : DATA_MIN_DATE.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            String dateStr;
+            if (date != null) {
+                // 解析 yyyy-MM-dd 格式，转换为 yyyyMMdd
+                LocalDate parsedDate = LocalDate.parse(date);
+                dateStr = parsedDate.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            } else {
+                dateStr = DATA_MIN_DATE.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            }
             redisKey = "news_hot_rank_daily:" + dateStr;
         } else if ("weekly".equalsIgnoreCase(period)) {
-            // 传入格式：yyyyMMdd，计算 ISO 周
+            // 传入格式：yyyy-MM-dd，计算 ISO 周
             LocalDate dateObj;
             if (date != null) {
-                dateObj = LocalDate.parse(date, DateTimeFormatter.ofPattern("yyyyMMdd"));
+                dateObj = LocalDate.parse(date);
             } else {
                 dateObj = LocalDate.now();
             }

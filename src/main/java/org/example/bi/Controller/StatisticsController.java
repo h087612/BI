@@ -103,7 +103,7 @@ public class StatisticsController {
     public StatisticsResponse getStatistics(@ModelAttribute StatisticsRequest request) {
         long startTime = System.currentTimeMillis();
         StatisticsResponse response = new StatisticsResponse();
-        
+        System.out.println("get message");
         try {
             // 1. 参数验证和预处理
             validateRequest(request);
