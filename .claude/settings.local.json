@@ -6,7 +6,9 @@
       "Bash(grep -n \"titleLength\\|contentLength\" /Users/I765180/Documents/homework/BI/backend/src/main/java/org/example/bi/Controller/StatisticsController.java)",
       "Bash(rm /Users/I765180/Documents/homework/BI/backend/src/main/java/org/example/bi/Config/WebConfig.java)",
       "Bash(find /Users/I765180/Documents/homework/BI/backend -name \"*.lua\" -type f)",
-      "Bash(redis-cli TYPE user_cate_score:1)"
+      "Bash(redis-cli TYPE user_cate_score:1)",
+      "Bash(grep -n \"new StatisticsResponse\\.NewsStat\" /Users/I765180/Documents/homework/BI/backend/src/main/java/org/example/bi/Controller/StatisticsController.java)",
+      "Bash(grep -n \"getRankedNews\" /Users/I765180/Documents/homework/BI/backend/src/main/java/org/example/bi/Controller/NewsController.java)"
     ],
     "deny": []
   }

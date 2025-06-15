@@ -3,6 +3,8 @@ package org.example.bi.Controller;
 import jakarta.annotation.Resource;
 import org.example.bi.DTO.StatisticsRequest;
 import org.example.bi.DTO.StatisticsResponse;
+import org.example.bi.Entity.News;
+import org.example.bi.Repository.NewsRepository;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -44,6 +46,9 @@ public class StatisticsController {
     
     @Resource
     private JdbcTemplate jdbcTemplate;
+    
+    @Resource
+    private NewsRepository newsRepository;
     
     private final NamedParameterJdbcTemplate namedJdbcTemplate;
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
@@ -428,6 +433,11 @@ public class StatisticsController {
         // 获取当前页数据
         List<StatisticsResponse.NewsStat> newsStats = new ArrayList<>();
         if (startIndex < sortedNews.size()) {
+            // 获取当前页的新闻ID列表
+            List<String> newsIds2 = sortedNews.subList(startIndex, endIndex).stream()
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+            
             newsStats = sortedNews.subList(startIndex, endIndex).stream()
                 .map(entry -> new StatisticsResponse.NewsStat(entry.getKey(), entry.getValue()))
                 .collect(Collectors.toList());
@@ -580,8 +590,13 @@ public class StatisticsController {
         params.addValue("limit", pageSize);
         params.addValue("offset", offset);
         
-        return namedJdbcTemplate.query(sql.toString(), params, (rs, rowNum) -> 
+        // 先查询基本统计数据
+        List<StatisticsResponse.NewsStat> basicStats = namedJdbcTemplate.query(sql.toString(), params, (rs, rowNum) -> 
             new StatisticsResponse.NewsStat(rs.getString("newsId"), rs.getLong("clickCount")));
+        
+        // 不再查询新闻详情，直接返回基本统计数据
+        
+        return basicStats;
     }
     
     /**

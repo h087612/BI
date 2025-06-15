@@ -39,7 +39,8 @@ public class NewsController {
     private StringRedisTemplate stringRedisTemplate;
     private DefaultRedisScript<List> recommendScript;
     private DefaultRedisScript<List> popularityScript;
-
+    private static final LocalDate DATA_MIN_DATE = LocalDate.parse("2019-06-13");
+    private static final LocalDate DATA_MAX_DATE = LocalDate.parse("2019-07-12");
     @Autowired
     private UserClickRepository userClickRepository;
 
@@ -475,7 +476,6 @@ public class NewsController {
             return resp;
         }
     }
-
     @GetMapping("/recommend/rank")
     public ResponseEntity<?> getRankedNews(
             @RequestParam(defaultValue = "daily") String period, // 可选值: daily, weekly, all
@@ -486,7 +486,7 @@ public class NewsController {
 
         String redisKey;
         if ("daily".equalsIgnoreCase(period)) {
-            String dateStr = date != null ? date : LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            String dateStr = date != null ? date : DATA_MIN_DATE.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
             redisKey = "news_hot_rank_daily:" + dateStr;
         } else if ("weekly".equalsIgnoreCase(period)) {
             // 传入格式：yyyyMMdd，计算 ISO 周
@@ -515,24 +515,38 @@ public class NewsController {
             return ResponseEntity.ok(response);
         }
 
+        // 创建新闻ID到点击量的映射
+        Map<String, Long> newsClickMap = new HashMap<>();
+        for (ZSetOperations.TypedTuple<String> tuple : newsSet) {
+            if (tuple.getValue() != null && tuple.getScore() != null) {
+                newsClickMap.put(tuple.getValue(), tuple.getScore().longValue());
+            }
+        }
+
         // 提取新闻 ID
-        List<String> newsIds = newsSet.stream()
-                .map(ZSetOperations.TypedTuple::getValue)
-                .collect(Collectors.toList());
+        List<String> newsIds = new ArrayList<>(newsClickMap.keySet());
 
         // 查询 MySQL 获取详情（仅返回部分字段）
         List<News> newsList = newsRepository.findSimpleInfoByIds(newsIds);
 
-        // 构建响应数据
+        // 构建响应数据，保持Redis中的排序
+        Map<String, News> newsMap = newsList.stream()
+                .collect(Collectors.toMap(News::getId, news -> news));
+        
         List<Map<String, Object>> result = new ArrayList<>();
-        for (News news : newsList) {
-            Map<String, Object> item = new HashMap<>();
-            item.put("id", news.getId());
-            item.put("category", news.getCategory());
-            item.put("topic", news.getTopic());
-            item.put("headline", news.getHeadline());
-            item.put("publishDate", news.getPublishTime());
-            result.add(item);
+        for (ZSetOperations.TypedTuple<String> tuple : newsSet) {
+            String newsId = tuple.getValue();
+            News news = newsMap.get(newsId);
+            if (news != null) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("id", news.getId());
+                item.put("category", news.getCategory());
+                item.put("topic", news.getTopic());
+                item.put("headline", news.getHeadline());
+                item.put("publishDate", news.getPublishTime());
+                item.put("clickCount", newsClickMap.get(newsId));
+                result.add(item);
+            }
         }
 
 

@@ -214,12 +214,15 @@ public class UserController {
                 String category = entry.getKey().toString();
                 Double score = Double.parseDouble(entry.getValue().toString());
                 
-                UserBrowseHistoryItem item = new UserBrowseHistoryItem(
-                    currentTimestamp,
-                    category,
-                    score
-                );
-                allItems.add(item);
+                // 过滤掉负数评分
+                if (score > 0) {
+                    UserBrowseHistoryItem item = new UserBrowseHistoryItem(
+                        currentTimestamp,
+                        category,
+                        score
+                    );
+                    allItems.add(item);
+                }
             }
             
             // 按分数降序排序
@@ -365,7 +368,7 @@ public class UserController {
                         for (Map.Entry<Object, Object> entry : sortedEntries) {
                             UserInterestDetail detail = new UserInterestDetail(
                                 entry.getKey().toString(),
-                                entry.getValue().toString()
+                                Float.parseFloat(entry.getValue().toString())
                             );
                             interests.add(detail);
                         }

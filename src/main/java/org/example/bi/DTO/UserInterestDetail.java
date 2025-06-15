@@ -7,12 +7,12 @@ public class UserInterestDetail {
     private String category;
     
     @JsonProperty("score")
-    private String score;
+    private Float score;
     
     public UserInterestDetail() {
     }
     
-    public UserInterestDetail(String category, String score) {
+    public UserInterestDetail(String category, Float score) {
         this.category = category;
         this.score = score;
     }
@@ -25,11 +25,11 @@ public class UserInterestDetail {
         this.category = category;
     }
     
-    public String getScore() {
+    public Float getScore() {
         return score;
     }
     
-    public void setScore(String score) {
+    public void setScore(Float score) {
         this.score = score;
     }
 }
